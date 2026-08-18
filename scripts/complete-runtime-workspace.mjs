@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, readdir, realpath, symlink } from 'node:fs/promises'
+import { cp, lstat, mkdir, readdir, realpath, symlink, unlink } from 'node:fs/promises'
 import path from 'node:path'
 
 const [deployRootArg, upstreamRootArg] = process.argv.slice(2)
@@ -66,13 +66,13 @@ for (const name of (await readdir(workspaceScope)).sort()) {
     if (await exists(target)) {
       const targetInfo = await lstat(target)
       if (!targetInfo.isSymbolicLink()) continue
-      await cp(source, target, {
-        recursive: true,
-        dereference: true,
-        force: true,
-        verbatimSymlinks: false,
-      })
-      continue
+      try {
+        await realpath(target)
+        continue
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+        await unlink(target)
+      }
     }
     await cp(source, target, {
       recursive: true,
