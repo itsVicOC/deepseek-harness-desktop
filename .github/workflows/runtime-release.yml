@@ -1,0 +1,80 @@
+name: Runtime Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: Upstream deepseek-harness ref to package
+        required: true
+        default: 47f943859bef60e4160492346772ded9b24f765a
+      channel:
+        description: Release channel
+        required: true
+        type: choice
+        options: [stable, beta]
+        default: stable
+  push:
+    tags:
+      - runtime-v*
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: macos-14
+    env:
+      UPSTREAM_REF: ${{ inputs.upstream_ref || '47f943859bef60e4160492346772ded9b24f765a' }}
+      RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+      DESKTOP_REPOSITORY: itsVicOC/deepseek-harness-desktop
+      SPARKLE_ARCHIVE_SHA256: ${{ secrets.SPARKLE_ARCHIVE_SHA256 }}
+      DSH_RUNTIME_SIGNING_PRIVATE_KEY: ${{ secrets.DSH_RUNTIME_SIGNING_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ env.UPSTREAM_REF }}
+          path: deepseek-harness
+          fetch-depth: 1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - name: Package arm64 runtime
+        run: ./scripts/package-runtime.sh deepseek-harness release-assets
+      - name: Resolve release metadata
+        id: release
+        run: |
+          VERSION=$(cat release-assets/runtime-version.txt)
+          TAG_NAME=runtime-v$VERSION
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+      - name: Create signed runtime payload
+        run: |
+          ARCHIVE=$(find release-assets -name 'dsh-runtime-*.tar.gz' -print -quit)
+          VERSION=$(cat release-assets/runtime-version.txt)
+          COMMIT=$(cat release-assets/upstream-commit.txt)
+          node scripts/create-runtime-payload.mjs "$ARCHIVE" "$VERSION" "$COMMIT" "$RELEASE_CHANNEL" "$DESKTOP_REPOSITORY"
+          node scripts/sign-runtime-manifest.mjs "$ARCHIVE.payload.json" "release-assets/runtime-$RELEASE_CHANNEL.json"
+      - name: Publish runtime assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/runtime-v') && github.ref_name || steps.release.outputs.tag_name }}
+          prerelease: ${{ env.RELEASE_CHANNEL == 'beta' }}
+          make_latest: ${{ env.RELEASE_CHANNEL == 'stable' }}
+          files: |
+            release-assets/dsh-runtime-*.tar.gz
+            release-assets/runtime-${{ env.RELEASE_CHANNEL }}.json
+      - name: Publish runtime channel
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: runtime-${{ env.RELEASE_CHANNEL }}
+          prerelease: ${{ env.RELEASE_CHANNEL == 'beta' }}
+          make_latest: false
+          files: |
+            release-assets/dsh-runtime-*.tar.gz
+            release-assets/runtime-${{ env.RELEASE_CHANNEL }}.json

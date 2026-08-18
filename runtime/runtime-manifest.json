@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "runtimeVersion": "0.1.0-rc.5",
+  "upstreamCommit": "47f943859bef60e4160492346772ded9b24f765a",
+  "desktopMinVersion": "0.1.0",
+  "desktopMaxVersion": "0.1.999",
+  "sha256": null,
+  "signature": null
+}

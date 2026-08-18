@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+src-tauri/target/
+src-tauri/gen/
+src-tauri/native/frameworks/
+runtime/current/*
+!runtime/current/.gitkeep
+release-assets/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
