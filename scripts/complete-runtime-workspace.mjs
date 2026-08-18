@@ -23,6 +23,12 @@ async function exists(target) {
 }
 
 async function linkInstalled(source, target) {
+  try {
+    await realpath(source)
+  } catch (error) {
+    if (error.code === 'ENOENT') return
+    throw error
+  }
   if (await exists(target)) return
   await mkdir(path.dirname(target), { recursive: true })
   await symlink(path.relative(path.dirname(target), source), target)
@@ -43,13 +49,34 @@ for (const name of (await readdir(installedRoot)).sort()) {
   }
 }
 
+const workspaceTargets = [
+  path.join(deployRoot, 'node_modules', '@deepseek-ai'),
+  path.join(deployRoot, 'node_modules/.pnpm/node_modules', '@deepseek-ai'),
+]
+
+for (const targetScope of workspaceTargets) {
+  await mkdir(targetScope, { recursive: true })
+}
+
 for (const name of (await readdir(workspaceScope)).sort()) {
   const source = await realpath(path.join(workspaceScope, name))
   if (source !== upstreamRoot && !source.startsWith(`${upstreamRoot}${path.sep}`)) continue
-  const target = path.join(targetScope, name)
-  if (await exists(target)) continue
-  await cp(source, target, {
-    recursive: true,
-    filter: current => path.basename(current) !== 'node_modules' && path.basename(current) !== '.git',
-  })
+  for (const targetScope of workspaceTargets) {
+    const target = path.join(targetScope, name)
+    if (await exists(target)) {
+      const targetInfo = await lstat(target)
+      if (!targetInfo.isSymbolicLink()) continue
+      await cp(source, target, {
+        recursive: true,
+        dereference: true,
+        force: true,
+        verbatimSymlinks: false,
+      })
+      continue
+    }
+    await cp(source, target, {
+      recursive: true,
+      filter: current => path.basename(current) !== 'node_modules' && path.basename(current) !== '.git',
+    })
+  }
 }
