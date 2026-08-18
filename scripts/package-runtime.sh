@@ -31,7 +31,10 @@ node "$SCRIPT_DIR/complete-runtime-workspace.mjs" "$WORK_DIR/dsh" "$UPSTREAM_DIR
 
 mkdir -p "$WORK_DIR/package/bin"
 cp "$NODE_BIN" "$WORK_DIR/package/bin/node"
-cp -R "$WORK_DIR/dsh" "$WORK_DIR/package/dsh"
+# pnpm deploy uses symlinks in node_modules. Resolve them before copying so
+# Tauri's resource packager sees a self-contained tree instead of dangling
+# workspace links from the temporary deployment directory.
+cp -RL "$WORK_DIR/dsh" "$WORK_DIR/package/dsh"
 
 cat > "$WORK_DIR/package/bin/dsh" <<'LAUNCHER'
 #!/bin/sh
