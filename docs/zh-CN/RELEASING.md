@@ -62,3 +62,14 @@ CI 会 checkout 上游、校验并安装 Sparkle、派生运行时公钥、打�
 - API Key 保留在 Keychain，诊断包不含 API Key 或 token。
 
 本地 unsigned 构建没有 Sparkle.framework 时返回 `SPARKLE_UNAVAILABLE`，属于预期行为。
+
+## 无证书 Beta 发布
+
+在 Actions 中手动运行 `Unsigned Beta`，或推送以下标签：
+
+```sh
+git tag unsigned-beta-v0.1.0
+git push origin unsigned-beta-v0.1.0
+```
+
+该流程只需要 `DSH_RUNTIME_SIGNING_PRIVATE_KEY`。它使用 `--no-sign` 构建 arm64 `.app` 和 `.dmg`，发布 GitHub prerelease，并更新 `runtime-beta` 渠道的签名运行时 manifest。应用不会公证，Gatekeeper 警告是预期行为，桌面 Sparkle 更新保持关闭。

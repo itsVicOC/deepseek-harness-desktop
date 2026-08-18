@@ -10,6 +10,7 @@ DeepSeek Harness 桌面版是 [DeepSeek Harness](https://github.com/deepseek-ai/
 - [开发](docs/zh-CN/DEVELOPMENT.md)：环境准备、本地运行、测试和运行时打包。
 - [发布](docs/zh-CN/RELEASING.md)：GitHub Actions、签名、公证、Stable/Beta 渠道和验收。
 - [故障排查](docs/zh-CN/TROUBLESHOOTING.md)：启动、更新、签名和 macOS 常见问题。
+- [Unsigned Beta 流程](.github/workflows/unsigned-beta.yml)：没有 Apple 证书时发布公开测试版。
 
 ## 仓库布局
 
@@ -72,6 +73,8 @@ pnpm tauri build --debug --no-bundle
 ```
 
 正式发布还需要 Developer ID 签名、Apple 公证、Sparkle 签名和运行时 manifest 签名。未放入 Sparkle.framework 的本地构建返回 `SPARKLE_UNAVAILABLE` 是预期行为。
+
+没有 Apple 证书时，请使用 `Unsigned Beta` workflow。它会生成 arm64 DMG/ZIP 并创建 GitHub prerelease；macOS 可能显示 Gatekeeper 警告，需要用户右键打开。桌面 Sparkle 自动更新会关闭，但 Harness 运行时仍可通过独立 Ed25519 密钥更新。
 
 ## GitHub Actions secrets
 

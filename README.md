@@ -10,6 +10,7 @@ This repository is the desktop product. Keep the upstream checkout in a sibling 
 - [Architecture](docs/ARCHITECTURE.md): process model, filesystem layout, security boundaries, and Tauri commands.
 - [Development](docs/DEVELOPMENT.md): prerequisites, local setup, preview modes, tests, and runtime packaging.
 - [Releasing](docs/RELEASING.md): GitHub Actions secrets, signing, notarization, channels, and release verification.
+- [Unsigned Beta](.github/workflows/unsigned-beta.yml): unsigned public testing workflow without Apple certificates.
 - [Troubleshooting](docs/TROUBLESHOOTING.md): common startup, update, signing, and macOS issues.
 
 ## Repository layout
@@ -90,6 +91,8 @@ cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
 Formal releases additionally require Developer ID signing, Apple notarization, Sparkle signature generation, and runtime manifest signing.
+
+Without Apple certificates, use the `Unsigned Beta` workflow. It produces an arm64 DMG/ZIP as a GitHub prerelease with Gatekeeper warnings expected, disables Sparkle desktop updates, and keeps independently signed Harness runtime updates enabled through the Ed25519 runtime key.
 
 ## Release secrets
 

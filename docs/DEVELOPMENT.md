@@ -68,6 +68,15 @@ It installs the pinned pnpm lockfile, builds upstream, performs a legacy deploy,
 
 The script sets `CI=true` for reproducible non-interactive pnpm behavior and removes an existing `current/` staging directory before copying the new result. The output is intentionally not committed to Git; release CI packages it on a macOS arm64 runner.
 
+To create the runtime signing key used by the no-certificate Beta flow:
+
+```sh
+./scripts/generate-runtime-signing-key.sh /secure/path/dsh-runtime-signing-key.pem
+gh secret set DSH_RUNTIME_SIGNING_PRIVATE_KEY --repo itsVicOC/deepseek-harness-desktop < /secure/path/dsh-runtime-signing-key.pem
+```
+
+Keep the private key in a password-protected location and never commit it. The public key is derived by CI and embedded in the application.
+
 ## Test and build commands
 
 ```sh
@@ -80,6 +89,10 @@ pnpm tauri build --debug --no-bundle
 ```
 
 Rust tests cover manifest signatures, SHA-256, appcast parsing, loopback authentication, URL redaction, and loopback port handling. Before opening a pull request, also run `git diff --check` and parse all workflow YAML files with a YAML parser.
+
+## Unsigned Beta
+
+The `Unsigned Beta` workflow is the supported distribution path before Apple Developer credentials are available. Trigger it manually with an upstream ref and release tag, or push a tag matching `unsigned-beta-v*`. It builds with Tauri `--no-sign`, skips Sparkle, and uploads an unsigned DMG/ZIP plus a runtime archive and signed runtime manifest. The desktop app itself is not notarized and should be treated as a test build.
 
 ## Safe change boundaries
 

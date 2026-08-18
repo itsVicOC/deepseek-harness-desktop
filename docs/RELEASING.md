@@ -67,3 +67,14 @@ For every release, verify:
 - Stopping and restarting the app preserves Keychain credentials while diagnostics contain no API key or token.
 
 Formal release artifacts require Apple Developer ID signing, notarization, Sparkle signatures, and runtime manifest signatures. Local unsigned builds intentionally report `SPARKLE_UNAVAILABLE`.
+
+## Unsigned Beta release
+
+Before Apple certificates are available, trigger `Unsigned Beta` from Actions or push a tag such as:
+
+```sh
+git tag unsigned-beta-v0.1.0
+git push origin unsigned-beta-v0.1.0
+```
+
+This workflow needs only `DSH_RUNTIME_SIGNING_PRIVATE_KEY`. It builds with Tauri `--no-sign`, publishes a GitHub prerelease containing arm64 DMG/ZIP artifacts, and updates the `runtime-beta` channel with a signed runtime manifest. The app is not notarized, Gatekeeper warnings are expected, and Sparkle desktop updates remain disabled.

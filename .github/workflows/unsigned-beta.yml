@@ -1,0 +1,94 @@
+name: Unsigned Beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: Upstream deepseek-harness commit or tag
+        required: true
+        default: 47f943859bef60e4160492346772ded9b24f765a
+      release_tag:
+        description: GitHub prerelease tag
+        required: true
+        default: unsigned-beta-v0.1.0
+  push:
+    tags:
+      - unsigned-beta-v*
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      UPSTREAM_REF: ${{ inputs.upstream_ref || '47f943859bef60e4160492346772ded9b24f765a' }}
+      RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+      DSH_RUNTIME_SIGNING_PRIVATE_KEY: ${{ secrets.DSH_RUNTIME_SIGNING_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: deepseek-ai/deepseek-harness
+          ref: ${{ env.UPSTREAM_REF }}
+          path: deepseek-harness
+          fetch-depth: 1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Configure runtime public key
+        run: node scripts/configure-runtime-public-key.mjs
+      - name: Build pinned runtime
+        run: ./scripts/package-runtime.sh deepseek-harness runtime
+      - name: Install desktop dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build unsigned arm64 app and DMG
+        run: pnpm tauri build --target aarch64-apple-darwin --bundles app dmg --no-sign --ci
+      - name: Prepare release assets
+        run: |
+          set -eu
+          mkdir -p release-assets
+          APP=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$APP"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "release-assets/DeepSeek-Harness-Desktop-${RELEASE_TAG}.app.zip"
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg release-assets/
+          ARCHIVE=$(find runtime -maxdepth 1 -name 'dsh-runtime-*.tar.gz' -print -quit)
+          VERSION=$(cat runtime/runtime-version.txt)
+          COMMIT=$(cat runtime/upstream-commit.txt)
+          node scripts/create-runtime-payload.mjs "$ARCHIVE" "$VERSION" "$COMMIT" beta itsVicOC/deepseek-harness-desktop
+          node scripts/sign-runtime-manifest.mjs "$ARCHIVE.payload.json" release-assets/runtime-beta.json
+          cp "$ARCHIVE" release-assets/
+      - name: Publish unsigned Beta prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: DeepSeek Harness Desktop ${{ env.RELEASE_TAG }} (Unsigned Beta)
+          prerelease: true
+          make_latest: false
+          generate_release_notes: true
+          body: |
+            Unsigned Apple Silicon beta build for testing.
+
+            This build is not notarized and macOS Gatekeeper may require users to right-click Open. Sparkle desktop updates are disabled. Harness runtime updates use the separately signed `runtime-beta.json` manifest.
+          files: |
+            release-assets/DeepSeek-Harness-Desktop-*.app.zip
+            release-assets/*.dmg
+            release-assets/dsh-runtime-*.tar.gz
+            release-assets/runtime-beta.json
+      - name: Publish runtime Beta channel
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: runtime-beta
+          name: DeepSeek Harness Runtime Beta
+          prerelease: true
+          make_latest: false
+          files: |
+            release-assets/dsh-runtime-*.tar.gz
+            release-assets/runtime-beta.json

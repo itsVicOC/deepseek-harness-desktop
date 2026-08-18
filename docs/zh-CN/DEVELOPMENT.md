@@ -70,3 +70,7 @@ Rust 测试覆盖 manifest 签名、SHA-256、appcast 解析、loopback 认证�
 ## 修改边界
 
 桌面逻辑只提交到本仓库。如果上游能力不足，优先增加桌面适配层或运行时配置。只有明确进行上游工作时才修改同级 checkout，且不得把上游目录加入桌面提交。
+
+## 无证书 Beta
+
+在没有 Apple Developer 证书时，使用 `Unsigned Beta` workflow。可在 Actions 页面手动输入上游 ref 和 release tag，也可以推送 `unsigned-beta-v*` 标签。该流程使用 Tauri `--no-sign`，跳过 Sparkle，上传 unsigned DMG/ZIP，并上传带签名的运行时 manifest。桌面应用不会公证，只适合测试。
