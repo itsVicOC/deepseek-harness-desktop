@@ -178,6 +178,9 @@ fn sanitized_request(input: &[u8], request: &ParsedRequest) -> io::Result<Vec<u8
     )
     .into_bytes();
     for (name, value) in &request.headers {
+        if name.eq_ignore_ascii_case("referer") && referer_contains_token(value) {
+            continue;
+        }
         if name.eq_ignore_ascii_case("cookie") {
             let value = std::str::from_utf8(value).map_err(invalid_request)?;
             let retained = Cookie::split_parse(value)
@@ -201,6 +204,13 @@ fn sanitized_request(input: &[u8], request: &ParsedRequest) -> io::Result<Vec<u8
     output.extend_from_slice(b"\r\n");
     output.extend_from_slice(&input[request.head_len..]);
     Ok(output)
+}
+
+fn referer_contains_token(value: &[u8]) -> bool {
+    std::str::from_utf8(value)
+        .ok()
+        .and_then(|value| Url::parse(value).ok())
+        .is_some_and(|url| url.query_pairs().any(|(name, _)| name == TOKEN_QUERY))
 }
 
 fn invalid_request(error: impl std::fmt::Display) -> io::Error {
@@ -227,5 +237,14 @@ mod tests {
             .expect("utf-8 request");
         assert!(sanitized.contains("Cookie: theme=dark"));
         assert!(!sanitized.contains("secret"));
+    }
+
+    #[test]
+    fn token_bearing_referer_is_not_forwarded() {
+        let input = b"GET /api HTTP/1.1\r\nReferer: http://127.0.0.1:4100/?dsh_token=secret\r\nCookie: dsh_desktop_session=secret\r\n\r\n";
+        let request = super::parse_request(input).expect("parse request");
+        let sanitized = String::from_utf8(sanitized_request(input, &request).expect("sanitize"))
+            .expect("utf-8 request");
+        assert!(!sanitized.contains("Referer:"));
     }
 }

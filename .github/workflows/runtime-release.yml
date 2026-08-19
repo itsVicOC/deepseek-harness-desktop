@@ -46,6 +46,8 @@ jobs:
           cache: pnpm
       - name: Package arm64 runtime
         run: ./scripts/package-runtime.sh deepseek-harness release-assets
+      - name: Verify packaged runtime
+        run: ./scripts/verify-runtime-payload.sh release-assets/current "$(cat release-assets/runtime-version.txt)" "$(cat release-assets/upstream-commit.txt)"
       - name: Resolve release metadata
         id: release
         run: |

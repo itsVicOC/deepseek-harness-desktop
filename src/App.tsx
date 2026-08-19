@@ -20,6 +20,9 @@ import {
   TerminalSquare,
 } from 'lucide-react'
 import { desktopApi } from './api'
+import { DESKTOP_VERSION, RUNTIME_VERSION, UPSTREAM_COMMIT } from './build-info'
+import appIcon from './assets/app-icon-source.png'
+import runtimeCore from './assets/runtime-core.png'
 import { translate, type Language, type MessageKey } from './i18n'
 import type { DesktopPreferences, RuntimeState, RuntimeStatus, UpdateStatus } from './types'
 
@@ -33,8 +36,8 @@ const defaultPreferences: DesktopPreferences = {
 
 const initialRuntime: RuntimeStatus = {
   state: 'stopped',
-  version: '0.1.0-rc.5',
-  upstreamCommit: '47f9438',
+  version: RUNTIME_VERSION,
+  upstreamCommit: UPSTREAM_COMMIT,
   url: null,
   pid: null,
   lastError: null,
@@ -71,24 +74,39 @@ function App() {
 
   const checkUpdates = useCallback(async () => {
     setChecking(true)
-    try {
-      const result = await Promise.all([
-        desktopApi.checkAppUpdate(preferences.channel),
-        desktopApi.checkRuntimeUpdate(preferences.channel),
-      ])
-      setUpdates(result)
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error))
-    } finally {
-      setChecking(false)
+    const requests = await Promise.allSettled([
+      desktopApi.checkAppUpdate(preferences.channel),
+      desktopApi.checkRuntimeUpdate(preferences.channel),
+    ])
+    const components = ['desktop', 'runtime'] as const
+    const result = requests.map((request, index) => request.status === 'fulfilled'
+      ? request.value
+      : {
+          component: components[index],
+          currentVersion: components[index] === 'desktop' ? DESKTOP_VERSION : RUNTIME_VERSION,
+          availableVersion: null,
+          channel: preferences.channel,
+          phase: 'failed' as const,
+          progress: 0,
+          requiresRestart: components[index] === 'desktop',
+          errorCode: 'CHECK_FAILED',
+          rollbackAvailable: false,
+          releaseNotes: request.reason instanceof Error ? request.reason.message : String(request.reason),
+        })
+    setUpdates(result)
+    if (requests.some(request => request.status === 'rejected')) {
+      setNotice(t('checkFailed'))
     }
-  }, [preferences.channel])
+    setChecking(false)
+  }, [preferences.channel, t])
 
   useEffect(() => {
     void desktopApi.runtimeStatus().then(setRuntime).catch(error => {
       setRuntime(current => ({ ...current, state: 'failed', lastError: String(error) }))
     })
-    void desktopApi.secureGet('deepseek-api-key').then(value => setApiKey(value ?? ''))
+    void desktopApi.secureGet('deepseek-api-key')
+      .then(value => setApiKey(value ?? ''))
+      .catch(error => setNotice(error instanceof Error ? error.message : String(error)))
     if (preferences.checkOnLaunch) void checkUpdates()
   }, [])
 
@@ -137,19 +155,31 @@ function App() {
   }, [checkUpdates, runRuntimeAction])
 
   const saveKey = async () => {
-    await desktopApi.secureSet('deepseek-api-key', apiKey)
-    setNotice(t('saved'))
+    try {
+      await desktopApi.secureSet('deepseek-api-key', apiKey)
+      setNotice(t('saved'))
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    }
   }
 
   const deleteKey = async () => {
-    await desktopApi.secureDelete('deepseek-api-key')
-    setApiKey('')
-    setNotice(t('removed'))
+    try {
+      await desktopApi.secureDelete('deepseek-api-key')
+      setApiKey('')
+      setNotice(t('removed'))
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    }
   }
 
   const exportDiagnostics = async () => {
-    const result = await desktopApi.exportDiagnostics()
-    setNotice(`${t('exported')}: ${result.path}`)
+    try {
+      const result = await desktopApi.exportDiagnostics()
+      setNotice(`${t('exported')}: ${result.path}`)
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error))
+    }
   }
 
   const rollbackRuntime = async () => {
@@ -175,7 +205,7 @@ function App() {
 
   const installUpdate = async (update: UpdateStatus) => {
     setUpdates(current => current.map(item => item.component === update.component
-      ? { ...item, phase: 'installing', progress: 0 }
+      ? { ...item, phase: update.component === 'runtime' ? 'downloading' : 'installing', progress: 0 }
       : item))
     try {
       const installed = update.component === 'desktop'
@@ -203,7 +233,7 @@ function App() {
       <aside className="sidebar" data-tauri-drag-region>
         <div className="traffic-light-space" data-tauri-drag-region />
         <div className="brand" data-tauri-drag-region>
-          <span className="brand-mark">DS</span>
+          <span className="brand-mark"><img src={appIcon} alt="" /></span>
           <span>{t('appName')}</span>
         </div>
         <nav className="navigation" aria-label="Primary">
@@ -276,10 +306,17 @@ function App() {
               <iframe className="harness-frame" title="DeepSeek Harness" src={runtime.url} allow="clipboard-read; clipboard-write" />
             ) : (
               <div className="empty-state">
-                <div className={`runtime-glyph ${stateTone(runtime.state)}`}>
-                  {runtime.state === 'starting' ? <LoaderCircle className="spin" /> : <Gauge />}
+                <div className="empty-state-art" aria-hidden="true">
+                  <img src={runtimeCore} alt="" />
+                  <span className={`runtime-glyph ${stateTone(runtime.state)}`}>
+                    {runtime.state === 'starting' ? <LoaderCircle className="spin" /> : <Gauge />}
+                  </span>
                 </div>
-                <h2>{t('runtimeUnavailable')}</h2>
+                <div className="empty-state-copy">
+                  <span className="eyebrow">{t('localRuntime')}</span>
+                  <h2>{t('runtimeUnavailable')}</h2>
+                  <p>{t('runtimeDescription')}</p>
+                </div>
                 {runtime.lastError !== null && <code>{runtime.lastError}</code>}
                 <button className="primary icon-text" disabled={busyRuntime} onClick={() => void runRuntimeAction('start')}>
                   <Play size={16} fill="currentColor" />
@@ -307,7 +344,15 @@ function App() {
                         {update?.availableVersion ?? update?.currentVersion ?? runtime.version}
                       </span>
                     </div>
-                    <p>{checking ? t('checking') : available ? t('available') : t('current')}</p>
+                    <p>{checking
+                      ? t('checking')
+                      : update?.phase === 'failed'
+                        ? t('checkFailed')
+                        : update?.phase === 'handedoff'
+                          ? t('handedOff')
+                        : available
+                          ? t('available')
+                          : t('current')}</p>
                     {update?.releaseNotes && <p className="release-notes">{update.releaseNotes}</p>}
                     {update?.errorCode === 'UPDATE_SOURCE_NOT_CONFIGURED' && <p className="secondary-text">{t('notConfigured')}</p>}
                     {(update?.phase === 'downloading' || update?.phase === 'installing') && (

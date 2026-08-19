@@ -46,7 +46,8 @@ button { color: inherit; }
 
 .traffic-light-space { height: 46px; flex: 0 0 auto; }
 .brand { display: flex; align-items: center; gap: 9px; padding: 4px 10px 18px; font-size: 14px; font-weight: 650; }
-.brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: #111317; color: #fff; font-size: 10px; font-weight: 750; }
+.brand-mark { display: grid; place-items: center; width: 29px; height: 29px; overflow: hidden; border-radius: 8px; background: #111317; color: #fff; font-size: 10px; font-weight: 750; box-shadow: 0 2px 8px rgba(23, 105, 224, 0.2); }
+.brand-mark img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .navigation { display: flex; flex-direction: column; gap: 3px; }
 .nav-item { display: flex; align-items: center; gap: 9px; width: 100%; height: 34px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; text-align: left; font-size: 13px; cursor: default; }
 .nav-item:hover { background: rgba(255, 255, 255, 0.55); }
@@ -82,8 +83,17 @@ button:disabled { opacity: 0.46; }
 .dismiss { margin-left: auto; width: 24px; height: 24px; border-radius: 6px; background: transparent; font-size: 18px; }
 .workbench { flex: 1; min-height: 0; }
 .harness-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
-.empty-state { height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; padding: 32px; color: var(--secondary-text); }
-.empty-state h2 { margin: 0; color: var(--text); font-size: 16px; font-weight: 620; }
+.empty-state { position: relative; height: 100%; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px; overflow: hidden; padding: 32px; color: var(--secondary-text); background: radial-gradient(circle at 50% 34%, rgba(23, 105, 224, 0.09), transparent 34%), #fafbfc; }
+.empty-state::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(250, 251, 252, 0.18), rgba(250, 251, 252, 0.94) 76%); }
+.empty-state > * { position: relative; z-index: 1; }
+.empty-state-art { position: relative; width: min(330px, 42vw); aspect-ratio: 1; margin-top: -26px; border-radius: 50%; filter: saturate(0.92); mask-image: radial-gradient(circle, #000 48%, transparent 76%); -webkit-mask-image: radial-gradient(circle, #000 48%, transparent 76%); }
+.empty-state-art::after { content: ""; position: absolute; inset: 22%; border: 1px solid rgba(91, 157, 245, 0.2); border-radius: 50%; box-shadow: 0 0 34px rgba(23, 105, 224, 0.16); }
+.empty-state-art img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; opacity: 0.76; }
+.empty-state-art .runtime-glyph { position: absolute; top: 50%; left: 50%; width: 54px; height: 54px; transform: translate(-50%, -50%); border-color: rgba(255, 255, 255, 0.38); background: rgba(9, 18, 34, 0.58); color: #fff; box-shadow: 0 10px 30px rgba(0, 20, 54, 0.28); backdrop-filter: blur(12px); }
+.empty-state-copy { display: flex; align-items: center; flex-direction: column; gap: 7px; text-align: center; }
+.eyebrow { color: var(--accent); font-size: 10px; font-weight: 700; letter-spacing: 0.13em; }
+.empty-state h2 { margin: 0; color: var(--text); font-size: 18px; font-weight: 650; letter-spacing: -0.015em; }
+.empty-state-copy p { max-width: 360px; margin: 0; color: var(--secondary-text); font-size: 12px; line-height: 1.55; }
 .empty-state code { max-width: 620px; padding: 9px 12px; border-radius: 6px; background: #f0f1f3; color: var(--negative); white-space: pre-wrap; }
 .runtime-glyph { display: grid; width: 54px; height: 54px; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-solid); color: var(--secondary-text); }
 .runtime-glyph.positive { color: var(--positive); }
@@ -157,6 +167,9 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px r
   .segmented-control button.selected, select, input[type="password"] { background: #35383d; color: var(--text); }
   .version-pill { background: #303238; }
   .harness-frame { color-scheme: dark; background: #151618; }
+  .empty-state { background: radial-gradient(circle at 50% 34%, rgba(74, 143, 241, 0.16), transparent 36%), #151618; }
+  .empty-state::before { background: linear-gradient(180deg, rgba(21, 22, 24, 0.12), rgba(21, 22, 24, 0.95) 78%); }
+  .empty-state-art .runtime-glyph { background: rgba(6, 13, 27, 0.68); }
 }
 
 @media (max-width: 880px) {

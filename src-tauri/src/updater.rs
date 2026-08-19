@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::Cursor,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -11,7 +11,8 @@ use quick_xml::{events::Event, Reader};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tempfile::Builder;
+use tempfile::{Builder, NamedTempFile};
+use tokio::{io::AsyncWriteExt, time::Duration};
 use url::Url;
 
 use crate::{
@@ -26,6 +27,8 @@ const DEFAULT_RUNTIME_BETA: &str =
 const DEFAULT_APPCAST_STABLE: &str = "https://github.com/itsVicOC/deepseek-harness-desktop/releases/download/desktop-stable/appcast-stable.xml";
 const DEFAULT_APPCAST_BETA: &str =
     "https://github.com/itsVicOC/deepseek-harness-desktop/releases/download/desktop-beta/appcast-beta.xml";
+const MAX_RUNTIME_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_APPCAST_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -73,7 +76,11 @@ impl UpdateManager {
             paths,
             desktop_version: Version::parse(env!("CARGO_PKG_VERSION"))
                 .expect("package version must be semver"),
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(120))
+                .build()
+                .expect("HTTP client configuration must be valid"),
         }
     }
 
@@ -111,28 +118,34 @@ impl UpdateManager {
         })
     }
 
-    pub async fn install_runtime(
+    pub(crate) async fn install_runtime_with_operation_held(
         &self,
         channel: UpdateChannel,
         requested_version: &str,
+        current_version: &str,
+    ) -> Result<UpdateStatus, DesktopError> {
+        self.install_runtime_inner(channel, requested_version, current_version)
+            .await
+    }
+
+    async fn install_runtime_inner(
+        &self,
+        channel: UpdateChannel,
+        requested_version: &str,
+        current_version: &str,
     ) -> Result<UpdateStatus, DesktopError> {
         let manifest = self.fetch_runtime_manifest(channel).await?;
         self.verify_compatibility(&manifest.payload)?;
         if manifest.payload.version != requested_version {
             return Err(DesktopError::UpdateNotFound);
         }
+        validate_newer_version(current_version, &manifest.payload.version)?;
         validate_https_url(&manifest.payload.archive_url)?;
 
-        let bytes = self
-            .client
-            .get(&manifest.payload.archive_url)
-            .send()
-            .await?
-            .error_for_status()?
-            .bytes()
+        let archive = self
+            .download_runtime_archive(&manifest.payload.archive_url, &manifest.payload.sha256)
             .await?;
-        verify_sha256(&bytes, &manifest.payload.sha256)?;
-        self.install_archive(&bytes, &manifest.payload)?;
+        self.install_archive(archive.path(), &manifest.payload)?;
 
         Ok(UpdateStatus {
             component: "runtime".into(),
@@ -151,14 +164,19 @@ impl UpdateManager {
     pub async fn check_app(&self, channel: UpdateChannel) -> Result<UpdateStatus, DesktopError> {
         let endpoint = appcast_endpoint(channel);
         validate_https_url(&endpoint)?;
-        let xml = self
-            .client
-            .get(endpoint)
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+        let response = self.client.get(endpoint).send().await?.error_for_status()?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_APPCAST_BYTES)
+        {
+            return Err(DesktopError::Other("appcast is too large".into()));
+        }
+        let xml = response.bytes().await?;
+        if xml.len() as u64 > MAX_APPCAST_BYTES {
+            return Err(DesktopError::Other("appcast is too large".into()));
+        }
+        let xml = std::str::from_utf8(&xml)
+            .map_err(|error| DesktopError::Other(format!("invalid appcast encoding: {error}")))?;
         let release = parse_appcast(&xml)?;
         validate_https_url(&release.archive_url)?;
         let available = Version::parse(&release.version)
@@ -187,7 +205,11 @@ impl UpdateManager {
         appcast_endpoint(channel)
     }
 
-    pub fn rollback_runtime(&self) -> Result<(), DesktopError> {
+    pub(crate) async fn rollback_runtime_with_operation_held(&self) -> Result<(), DesktopError> {
+        self.rollback_runtime_inner()
+    }
+
+    fn rollback_runtime_inner(&self) -> Result<(), DesktopError> {
         let pointer_path = self.paths.runtime.join("current.json");
         let mut pointer: RuntimePointer =
             serde_json::from_str(&fs::read_to_string(&pointer_path)?)?;
@@ -229,12 +251,52 @@ impl UpdateManager {
         Ok(())
     }
 
-    fn install_archive(&self, bytes: &[u8], release: &RuntimeRelease) -> Result<(), DesktopError> {
+    async fn download_runtime_archive(
+        &self,
+        url: &str,
+        expected_sha256: &str,
+    ) -> Result<NamedTempFile, DesktopError> {
+        fs::create_dir_all(&self.paths.runtime)?;
+        let mut response = self.client.get(url).send().await?.error_for_status()?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_RUNTIME_ARCHIVE_BYTES)
+        {
+            return Err(DesktopError::Other("runtime archive is too large".into()));
+        }
+
+        let temporary = Builder::new()
+            .prefix("runtime-download-")
+            .tempfile_in(&self.paths.runtime)?;
+        let mut output = tokio::fs::File::from_std(temporary.reopen()?);
+        let mut digest = Sha256::new();
+        let mut total = 0_u64;
+        while let Some(chunk) = response.chunk().await? {
+            total = total
+                .checked_add(chunk.len() as u64)
+                .ok_or_else(|| DesktopError::Other("runtime archive is too large".into()))?;
+            if total > MAX_RUNTIME_ARCHIVE_BYTES {
+                return Err(DesktopError::Other("runtime archive is too large".into()));
+            }
+            digest.update(&chunk);
+            output.write_all(&chunk).await?;
+        }
+        output.flush().await?;
+        output.sync_all().await?;
+        verify_checksum(&hex::encode(digest.finalize()), expected_sha256)?;
+        Ok(temporary)
+    }
+
+    fn install_archive(
+        &self,
+        archive_path: &Path,
+        release: &RuntimeRelease,
+    ) -> Result<(), DesktopError> {
         fs::create_dir_all(&self.paths.runtime)?;
         let staging = Builder::new()
             .prefix("runtime-update-")
             .tempdir_in(&self.paths.runtime)?;
-        unpack_archive(bytes, staging.path())?;
+        unpack_archive(archive_path, staging.path())?;
         let launcher = staging.path().join("bin/dsh");
         if !launcher.is_file() {
             return Err(DesktopError::Other(
@@ -251,7 +313,14 @@ impl UpdateManager {
 
         let target = self.paths.runtime.join(&release.version);
         if target.exists() {
-            fs::remove_dir_all(&target)?;
+            let existing_launcher = target.join("bin/dsh");
+            if !existing_launcher.is_file() {
+                fs::remove_dir_all(&target)?;
+            } else {
+                return Err(DesktopError::Other(
+                    "runtime version is already installed".into(),
+                ));
+            }
         }
         let staging_path = staging.keep();
         fs::rename(&staging_path, &target)?;
@@ -273,7 +342,7 @@ fn runtime_endpoint(channel: UpdateChannel) -> String {
         UpdateChannel::Stable => "DSH_RUNTIME_STABLE_URL",
         UpdateChannel::Beta => "DSH_RUNTIME_BETA_URL",
     };
-    std::env::var(key).unwrap_or_else(|_| match channel {
+    debug_override(key).unwrap_or_else(|| match channel {
         UpdateChannel::Stable => DEFAULT_RUNTIME_STABLE.into(),
         UpdateChannel::Beta => DEFAULT_RUNTIME_BETA.into(),
     })
@@ -284,14 +353,14 @@ fn appcast_endpoint(channel: UpdateChannel) -> String {
         UpdateChannel::Stable => "DSH_APPCAST_STABLE_URL",
         UpdateChannel::Beta => "DSH_APPCAST_BETA_URL",
     };
-    std::env::var(key).unwrap_or_else(|_| match channel {
+    debug_override(key).unwrap_or_else(|| match channel {
         UpdateChannel::Stable => DEFAULT_APPCAST_STABLE.into(),
         UpdateChannel::Beta => DEFAULT_APPCAST_BETA.into(),
     })
 }
 
 fn runtime_public_key() -> Result<Vec<u8>, DesktopError> {
-    let encoded = std::env::var("DSH_RUNTIME_PUBLIC_KEY").unwrap_or_else(|_| {
+    let encoded = debug_override("DSH_RUNTIME_PUBLIC_KEY").unwrap_or_else(|| {
         include_str!("../../runtime/public-key.txt")
             .trim()
             .to_owned()
@@ -302,6 +371,16 @@ fn runtime_public_key() -> Result<Vec<u8>, DesktopError> {
     BASE64
         .decode(encoded)
         .map_err(|_| DesktopError::InvalidSignature)
+}
+
+#[cfg(debug_assertions)]
+fn debug_override(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|value| !value.is_empty())
+}
+
+#[cfg(not(debug_assertions))]
+fn debug_override(_key: &str) -> Option<String> {
+    None
 }
 
 pub fn verify_manifest(
@@ -325,10 +404,24 @@ pub fn verify_manifest(
         .map_err(|_| DesktopError::InvalidSignature)
 }
 
-fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), DesktopError> {
-    let actual = hex::encode(Sha256::digest(bytes));
+fn verify_checksum(actual: &str, expected: &str) -> Result<(), DesktopError> {
     if !actual.eq_ignore_ascii_case(expected) {
         return Err(DesktopError::InvalidChecksum);
+    }
+    Ok(())
+}
+
+fn validate_newer_version(current: &str, requested: &str) -> Result<(), DesktopError> {
+    let current = Version::parse(current).map_err(|error| {
+        DesktopError::Other(format!("invalid current runtime version: {error}"))
+    })?;
+    let requested = Version::parse(requested).map_err(|error| {
+        DesktopError::Other(format!("invalid release runtime version: {error}"))
+    })?;
+    if requested <= current {
+        return Err(DesktopError::Other(
+            "runtime installation only accepts a newer version; use rollback for downgrade".into(),
+        ));
     }
     Ok(())
 }
@@ -342,8 +435,8 @@ fn validate_https_url(value: &str) -> Result<(), DesktopError> {
     Ok(())
 }
 
-fn unpack_archive(bytes: &[u8], destination: &Path) -> Result<(), DesktopError> {
-    let decoder = GzDecoder::new(Cursor::new(bytes));
+fn unpack_archive(archive_path: &Path, destination: &Path) -> Result<(), DesktopError> {
+    let decoder = GzDecoder::new(fs::File::open(archive_path)?);
     let mut archive = tar::Archive::new(decoder);
     for entry in archive.entries()? {
         let mut entry = entry?;
@@ -370,9 +463,14 @@ fn read_pointer(path: &Path) -> Result<Option<RuntimePointer>, DesktopError> {
 }
 
 fn write_pointer(path: &Path, pointer: &RuntimePointer) -> Result<(), DesktopError> {
-    let temporary = PathBuf::from(format!("{}.tmp", path.display()));
-    fs::write(&temporary, serde_json::to_vec_pretty(pointer)?)?;
+    let temporary = PathBuf::from(format!("{}.{}.tmp", path.display(), std::process::id()));
+    let mut file = fs::File::create(&temporary)?;
+    file.write_all(&serde_json::to_vec_pretty(pointer)?)?;
+    file.sync_all()?;
     fs::rename(temporary, path)?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)?.sync_all()?;
+    }
     Ok(())
 }
 
@@ -443,10 +541,14 @@ fn parse_appcast(xml: &str) -> Result<AppRelease, DesktopError> {
 mod tests {
     use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
     use ed25519_dalek::{Signer, SigningKey};
+    use flate2::{write::GzEncoder, Compression};
     use sha2::Digest;
+    use tar::Builder;
+    use tempfile::tempdir;
 
     use super::{
-        parse_appcast, verify_manifest, verify_sha256, RuntimeRelease, SignedRuntimeManifest,
+        parse_appcast, unpack_archive, validate_newer_version, verify_checksum, verify_manifest,
+        RuntimeRelease, SignedRuntimeManifest,
     };
 
     #[test]
@@ -476,8 +578,16 @@ mod tests {
 
     #[test]
     fn rejects_checksum_mismatch() {
-        assert!(verify_sha256(b"runtime", &hex::encode(sha2::Sha256::digest(b"runtime"))).is_ok());
-        assert!(verify_sha256(b"runtime", &"00".repeat(32)).is_err());
+        let actual = hex::encode(sha2::Sha256::digest(b"runtime"));
+        assert!(verify_checksum(&actual, &actual).is_ok());
+        assert!(verify_checksum(&actual, &"00".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn runtime_install_requires_a_newer_version() {
+        assert!(validate_newer_version("0.1.0", "0.1.1").is_ok());
+        assert!(validate_newer_version("0.1.1", "0.1.1").is_err());
+        assert!(validate_newer_version("0.1.1", "0.1.0").is_err());
     }
 
     #[test]
@@ -487,5 +597,30 @@ mod tests {
         assert_eq!(release.version, "0.2.0");
         assert_eq!(release.archive_url, "https://example.com/app.zip");
         assert_eq!(release.release_notes.as_deref(), Some("Fixes"));
+    }
+
+    #[test]
+    fn rejects_archive_path_traversal() {
+        let root = tempdir().expect("temp root");
+        let archive_path = root.path().join("payload.tar.gz");
+        let archive_file = std::fs::File::create(&archive_path).expect("archive");
+        let encoder = GzEncoder::new(archive_file, Compression::default());
+        let mut builder = Builder::new(encoder);
+        let mut header = tar::Header::new_gnu();
+        header.set_path("safe").expect("path");
+        header.as_mut_bytes()[..10].copy_from_slice(b"../escape\0");
+        header.set_size(4);
+        header.set_cksum();
+        builder.append(&header, &b"test"[..]).expect("entry");
+        builder
+            .into_inner()
+            .expect("finish gzip")
+            .finish()
+            .expect("finish archive");
+
+        let destination = root.path().join("destination");
+        std::fs::create_dir(&destination).expect("destination");
+        assert!(unpack_archive(&archive_path, &destination).is_err());
+        assert!(!root.path().join("escape").exists());
     }
 }

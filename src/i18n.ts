@@ -35,6 +35,8 @@ const messages = {
     runtimeLogs: '运行时日志',
     openHarness: '打开工作台',
     runtimeUnavailable: '运行时尚未就绪',
+    localRuntime: '本地运行时',
+    runtimeDescription: '启动本地 Harness，进入安全、独立的智能工作台。',
     progress: '更新进度',
     version: '版本',
     upstream: '上游提交',
@@ -48,6 +50,8 @@ const messages = {
     clearLogs: '清理日志',
     logsCleared: '日志已清理',
     notConfigured: '更新源尚未配置',
+    checkFailed: '部分更新检查失败，请查看更新页中的错误信息。',
+    handedOff: '已交给系统更新器处理',
   },
   en: {
     appName: 'DeepSeek Harness',
@@ -83,6 +87,8 @@ const messages = {
     runtimeLogs: 'Runtime Logs',
     openHarness: 'Open Workbench',
     runtimeUnavailable: 'Runtime is not ready',
+    localRuntime: 'LOCAL RUNTIME',
+    runtimeDescription: 'Start the local Harness to enter your private agent workspace.',
     progress: 'Update progress',
     version: 'Version',
     upstream: 'Upstream commit',
@@ -96,6 +102,8 @@ const messages = {
     clearLogs: 'Clear Logs',
     logsCleared: 'Logs cleared',
     notConfigured: 'Update source is not configured',
+    checkFailed: 'Some update checks failed; see the update details for more information.',
+    handedOff: 'Handed off to the system updater',
   },
 } as const
 

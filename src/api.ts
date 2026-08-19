@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { DESKTOP_VERSION, RUNTIME_VERSION, UPSTREAM_COMMIT } from './build-info'
 import type { DiagnosticsResult, RuntimeStatus, UpdateChannel, UpdateStatus } from './types'
 
 const isTauri = typeof window !== 'undefined' && window.__TAURI_INTERNALS__ !== undefined
@@ -6,8 +7,8 @@ const developmentRuntimeUrl = import.meta.env.VITE_DSH_RUNTIME_URL ?? 'http://12
 
 const developmentRuntime: RuntimeStatus = {
   state: 'stopped',
-  version: '0.1.0-rc.5',
-  upstreamCommit: '47f943859bef60e4160492346772ded9b24f765a',
+  version: RUNTIME_VERSION,
+  upstreamCommit: UPSTREAM_COMMIT,
   url: null,
   pid: null,
   lastError: null,
@@ -17,7 +18,7 @@ const developmentRuntime: RuntimeStatus = {
 function unavailableUpdate(component: 'desktop' | 'runtime', channel: UpdateChannel): UpdateStatus {
   return {
     component,
-    currentVersion: component === 'desktop' ? '0.1.0' : developmentRuntime.version,
+    currentVersion: component === 'desktop' ? DESKTOP_VERSION : developmentRuntime.version,
     availableVersion: null,
     channel,
     phase: 'current',

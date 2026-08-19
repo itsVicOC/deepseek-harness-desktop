@@ -23,6 +23,8 @@ The harness binds only to a random loopback port. After the health check succeed
 
 Stopping the runtime kills the child process, drops the proxy, and clears the URL and PID from status. A failed child is surfaced as `failed` with a redacted diagnostic record.
 
+Runtime lifecycle commands are serialized so start, stop, restart, update, and rollback cannot interleave and leave an orphaned process or stale status. The loopback proxy also removes its authentication cookie and any token-bearing `Referer` before forwarding requests to the harness.
+
 ## Persistent paths
 
 All writable application data is under `~/Library/Application Support/DeepSeek Harness/`:
@@ -59,3 +61,5 @@ Commands are registered in `src-tauri/src/lib.rs` and exposed to the frontend th
 ## Update trust model
 
 Runtime manifests are canonical JSON payloads signed with Ed25519. The application checks the signature, HTTPS endpoint, desktop compatibility range, archive SHA-256, and tar path safety before installing. Desktop archives are signed by Sparkle and distributed through channel-specific appcasts. The app and runtime have separate version pointers and release assets.
+
+Release builds use only the update URLs and Ed25519 public key embedded at build time. Environment overrides are accepted in debug builds for local integration tests, but cannot replace the production trust configuration.

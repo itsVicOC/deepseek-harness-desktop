@@ -5,7 +5,8 @@ const allowedTransitions: Record<UpdatePhase, readonly UpdatePhase[]> = {
   checking: ['available', 'current', 'failed'],
   available: ['checking', 'downloading'],
   downloading: ['installing', 'failed'],
-  installing: ['current', 'failed'],
+  installing: ['handedoff', 'current', 'failed'],
+  handedoff: ['checking'],
   current: ['checking'],
   failed: ['checking', 'downloading'],
 }

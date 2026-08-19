@@ -49,6 +49,8 @@ Copy `.env.example` to a local environment file or export variables in the shell
 - `DSH_APPCAST_STABLE_URL` / `DSH_APPCAST_BETA_URL`: Sparkle appcast endpoints.
 - `DSH_RUNTIME_PUBLIC_KEY`: base64 Ed25519 public key used to verify test manifests.
 
+These update URL and public-key overrides are compiled out of release builds. They are intended only for local debug integration tests.
+
 Never place private keys or API keys in `.env` files, logs, fixtures, or pull requests.
 
 ## Runtime packaging
@@ -88,7 +90,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 pnpm tauri build --debug --no-bundle
 ```
 
-Rust tests cover manifest signatures, SHA-256, appcast parsing, loopback authentication, URL redaction, and loopback port handling. Before opening a pull request, also run `git diff --check` and parse all workflow YAML files with a YAML parser.
+Rust tests cover manifest signatures, SHA-256, appcast parsing, archive path traversal rejection, loopback authentication, URL redaction, and loopback port handling. Runtime lifecycle and update commands share one operation lock, and startup retries with a fresh port after a failed health check. Before opening a pull request, also run `git diff --check` and parse all workflow YAML files with a YAML parser.
 
 ## Unsigned Beta
 

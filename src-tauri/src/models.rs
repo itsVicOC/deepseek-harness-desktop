@@ -38,6 +38,7 @@ pub enum UpdatePhase {
     Available,
     Downloading,
     Installing,
+    HandedOff,
     Current,
     Failed,
 }

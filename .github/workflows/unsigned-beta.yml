@@ -47,6 +47,8 @@ jobs:
         run: node scripts/configure-runtime-public-key.mjs
       - name: Build pinned runtime
         run: ./scripts/package-runtime.sh deepseek-harness runtime
+      - name: Verify packaged runtime
+        run: ./scripts/verify-runtime-payload.sh runtime/current "$(cat runtime/runtime-version.txt)" "$(cat runtime/upstream-commit.txt)"
       - name: Install desktop dependencies
         run: pnpm install --frozen-lockfile
       - name: Build unsigned arm64 app and DMG

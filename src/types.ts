@@ -1,6 +1,6 @@
 export type RuntimeState = 'stopped' | 'starting' | 'running' | 'stopping' | 'failed'
 export type UpdateChannel = 'stable' | 'beta'
-export type UpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'current' | 'failed'
+export type UpdatePhase = 'idle' | 'checking' | 'available' | 'downloading' | 'installing' | 'handedoff' | 'current' | 'failed'
 
 export interface RuntimeStatus {
   state: RuntimeState

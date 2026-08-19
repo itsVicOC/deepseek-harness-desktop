@@ -10,6 +10,8 @@ mod updater;
 
 use std::sync::Arc;
 
+use tokio::sync::Mutex;
+
 use error::{CommandError, CommandResult, DesktopError};
 use models::{DiagnosticsResult, RuntimeStatus, UpdateChannel, UpdatePhase, UpdateStatus};
 use paths::DesktopPaths;
@@ -26,6 +28,7 @@ struct AppState {
     runtime: Arc<RuntimeManager>,
     updates: Arc<UpdateManager>,
     secure: SecureStore,
+    operation: Arc<Mutex<()>>,
 }
 
 #[tauri::command]
@@ -75,20 +78,28 @@ async fn runtime_update_install(
     version: String,
     channel: UpdateChannel,
 ) -> CommandResult<UpdateStatus> {
+    let _operation = state.operation.lock().await;
     let previous = state.runtime.status().await;
     let was_running = matches!(
         previous.state,
         models::RuntimeState::Running | models::RuntimeState::Starting
     );
     if was_running {
-        state.runtime.stop().await.map_err(CommandError::from)?;
+        state
+            .runtime
+            .stop_with_operation_held()
+            .await
+            .map_err(CommandError::from)?;
     }
 
-    let result = state.updates.install_runtime(channel, &version).await;
+    let result = state
+        .updates
+        .install_runtime_with_operation_held(channel, &version, &previous.version)
+        .await;
     if let Err(error) = result {
         if was_running {
             let api_key = state.secure.get("deepseek-api-key").ok().flatten();
-            let _ = state.runtime.start(api_key).await;
+            let _ = state.runtime.start_with_operation_held(api_key).await;
         }
         return Err(error.into());
     }
@@ -98,13 +109,14 @@ async fn runtime_update_install(
             .secure
             .get("deepseek-api-key")
             .map_err(CommandError::from)?;
-        if let Err(start_error) = state.runtime.start(api_key).await {
+        if let Err(start_error) = state.runtime.start_with_operation_held(api_key).await {
             state
                 .updates
-                .rollback_runtime()
+                .rollback_runtime_with_operation_held()
+                .await
                 .map_err(CommandError::from)?;
             let rollback_key = state.secure.get("deepseek-api-key").ok().flatten();
-            let _ = state.runtime.start(rollback_key).await;
+            let _ = state.runtime.start_with_operation_held(rollback_key).await;
             return Err(DesktopError::Runtime(format!(
                 "updated runtime failed its health check and was rolled back: {start_error}"
             ))
@@ -138,7 +150,7 @@ async fn app_update_install(
         current_version: env!("CARGO_PKG_VERSION").into(),
         available_version: None,
         channel,
-        phase: UpdatePhase::Installing,
+        phase: UpdatePhase::HandedOff,
         progress: 0,
         requires_restart: true,
         error_code: None,
@@ -170,27 +182,33 @@ async fn diagnostics_export(state: State<'_, AppState>) -> CommandResult<Diagnos
 
 #[tauri::command]
 async fn runtime_rollback(state: State<'_, AppState>) -> CommandResult<RuntimeStatus> {
+    let _operation = state.operation.lock().await;
     let previous = state.runtime.status().await;
     let was_running = matches!(
         previous.state,
         models::RuntimeState::Running | models::RuntimeState::Starting
     );
     if was_running {
-        state.runtime.stop().await.map_err(CommandError::from)?;
+        state
+            .runtime
+            .stop_with_operation_held()
+            .await
+            .map_err(CommandError::from)?;
     }
     state
         .updates
-        .rollback_runtime()
+        .rollback_runtime_with_operation_held()
+        .await
         .map_err(CommandError::from)?;
 
     if was_running {
         let api_key = state.secure.get("deepseek-api-key").ok().flatten();
-        match state.runtime.start(api_key).await {
+        match state.runtime.start_with_operation_held(api_key).await {
             Ok(status) => Ok(status),
             Err(error) => {
-                let _ = state.updates.rollback_runtime();
+                let _ = state.updates.rollback_runtime_with_operation_held().await;
                 let restore_key = state.secure.get("deepseek-api-key").ok().flatten();
-                let _ = state.runtime.start(restore_key).await;
+                let _ = state.runtime.start_with_operation_held(restore_key).await;
                 Err(DesktopError::Runtime(format!(
                     "rollback runtime failed its health check; the original version was restored: {error}"
                 ))
@@ -244,13 +262,15 @@ pub fn run() {
                 .try_init()
                 .ok();
 
-            let runtime = Arc::new(RuntimeManager::new(paths.clone()));
+            let operation = Arc::new(Mutex::new(()));
+            let runtime = Arc::new(RuntimeManager::new(paths.clone(), operation.clone()));
             let updates = Arc::new(UpdateManager::new(paths.clone()));
             app.manage(AppState {
                 paths,
                 runtime,
                 updates,
                 secure: SecureStore,
+                operation,
             });
             Ok(())
         })

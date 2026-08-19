@@ -4,6 +4,7 @@ use std::{
     net::TcpListener,
     path::Path,
     process::Stdio,
+    sync::Arc,
     time::Duration,
 };
 
@@ -48,11 +49,12 @@ struct RuntimeInner {
 pub struct RuntimeManager {
     paths: DesktopPaths,
     client: reqwest::Client,
+    operation: Arc<Mutex<()>>,
     inner: Mutex<RuntimeInner>,
 }
 
 impl RuntimeManager {
-    pub fn new(paths: DesktopPaths) -> Self {
+    pub fn new(paths: DesktopPaths, operation: Arc<Mutex<()>>) -> Self {
         let manifest = serde_json::from_str::<BundledManifest>(include_str!(
             "../../runtime/runtime-manifest.json"
         ))
@@ -67,8 +69,10 @@ impl RuntimeManager {
             paths,
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(10))
                 .build()
                 .expect("HTTP client configuration must be valid"),
+            operation,
             inner: Mutex::new(RuntimeInner {
                 child: None,
                 proxy: None,
@@ -120,13 +124,42 @@ impl RuntimeManager {
     }
 
     pub async fn start(&self, api_key: Option<String>) -> Result<RuntimeStatus, DesktopError> {
+        let _operation = self.operation.lock().await;
+        self.start_inner(api_key).await
+    }
+
+    pub(crate) async fn start_with_operation_held(
+        &self,
+        api_key: Option<String>,
+    ) -> Result<RuntimeStatus, DesktopError> {
+        self.start_inner(api_key).await
+    }
+
+    async fn start_inner(&self, api_key: Option<String>) -> Result<RuntimeStatus, DesktopError> {
+        for attempt in 0..3 {
+            match self.start_attempt(api_key.clone()).await {
+                Ok(status) => return Ok(status),
+                Err(error)
+                    if attempt < 2
+                        && matches!(&error, DesktopError::Runtime(message) if message.contains("did not become healthy") || message.contains("exited during startup")) =>
+                {
+                    tracing::debug!(
+                        attempt = attempt + 1,
+                        "runtime startup failed; retrying with a fresh port"
+                    );
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        unreachable!("runtime startup retry loop always returns")
+    }
+
+    async fn start_attempt(&self, api_key: Option<String>) -> Result<RuntimeStatus, DesktopError> {
         {
-            let mut inner = self.inner.lock().await;
+            let inner = self.inner.lock().await;
             if inner.child.is_some() {
                 return Ok(inner.status.clone());
             }
-            inner.status.state = RuntimeState::Starting;
-            inner.status.last_error = None;
         }
 
         let upstream_port = reserve_loopback_port()?;
@@ -148,9 +181,23 @@ impl RuntimeManager {
             .stderr(Stdio::from(stderr))
             .kill_on_drop(true);
 
-        let child = command
-            .spawn()
-            .map_err(|error| DesktopError::Runtime(format!("failed to start dsh: {error}")))?;
+        {
+            let mut inner = self.inner.lock().await;
+            inner.status.state = RuntimeState::Starting;
+            inner.status.last_error = None;
+        }
+
+        let child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                let mut inner = self.inner.lock().await;
+                inner.status.state = RuntimeState::Failed;
+                inner.status.last_error = Some(format!("failed to start dsh: {error}"));
+                return Err(DesktopError::Runtime(format!(
+                    "failed to start dsh: {error}"
+                )));
+            }
+        };
         let pid = child.id();
 
         {
@@ -216,6 +263,15 @@ impl RuntimeManager {
     }
 
     pub async fn stop(&self) -> Result<RuntimeStatus, DesktopError> {
+        let _operation = self.operation.lock().await;
+        self.stop_inner().await
+    }
+
+    pub(crate) async fn stop_with_operation_held(&self) -> Result<RuntimeStatus, DesktopError> {
+        self.stop_inner().await
+    }
+
+    async fn stop_inner(&self) -> Result<RuntimeStatus, DesktopError> {
         let mut child = {
             let mut inner = self.inner.lock().await;
             inner.status.state = RuntimeState::Stopping;
@@ -237,15 +293,19 @@ impl RuntimeManager {
     }
 
     pub async fn restart(&self, api_key: Option<String>) -> Result<RuntimeStatus, DesktopError> {
-        self.stop().await?;
-        self.start(api_key).await
+        let _operation = self.operation.lock().await;
+        self.stop_inner().await?;
+        self.start_inner(api_key).await
     }
 
     fn runtime_command(&self, port: u16) -> Result<(Command, String, String), DesktopError> {
         let bundled = serde_json::from_str::<BundledManifest>(include_str!(
             "../../runtime/runtime-manifest.json"
         ))?;
-        if let Ok(binary) = std::env::var("DSH_DESKTOP_DSH_BIN") {
+        if let Some(binary) = std::env::var("DSH_DESKTOP_DSH_BIN")
+            .ok()
+            .filter(|value| !value.is_empty())
+        {
             let mut command = Command::new(binary);
             command.args(["web", "--host", "127.0.0.1", "--port", &port.to_string()]);
             return Ok((command, bundled.runtime_version, bundled.upstream_commit));
@@ -363,11 +423,19 @@ fn read_pointer(paths: &DesktopPaths) -> Result<Option<RuntimePointer>, DesktopE
 #[cfg(test)]
 mod tests {
     use super::reserve_loopback_port;
-    use std::net::TcpListener;
+    use std::{io::ErrorKind, net::TcpListener};
 
     #[test]
     fn reserved_port_is_loopback_bindable() {
-        let port = reserve_loopback_port().expect("reserve port");
+        let port = match reserve_loopback_port() {
+            Ok(port) => port,
+            Err(crate::error::DesktopError::Io(error))
+                if error.kind() == ErrorKind::PermissionDenied =>
+            {
+                return;
+            }
+            Err(error) => panic!("reserve port: {error}"),
+        };
         let listener = TcpListener::bind(("127.0.0.1", port)).expect("bind released port");
         assert_eq!(
             listener
