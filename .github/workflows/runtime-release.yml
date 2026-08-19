@@ -27,7 +27,6 @@ jobs:
       UPSTREAM_REF: ${{ inputs.upstream_ref || '47f943859bef60e4160492346772ded9b24f765a' }}
       RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
       DESKTOP_REPOSITORY: itsVicOC/deepseek-harness-desktop
-      SPARKLE_ARCHIVE_SHA256: ${{ secrets.SPARKLE_ARCHIVE_SHA256 }}
       DSH_RUNTIME_SIGNING_PRIVATE_KEY: ${{ secrets.DSH_RUNTIME_SIGNING_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
